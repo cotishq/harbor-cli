@@ -142,8 +142,8 @@ func pollTokenEndpoint(ctx context.Context, endpoint, clientID string, device de
 		values.Set("device_code", device.DeviceCode)
 		values.Set("client_id", clientID)
 
-		var tokens tokenResponse
-		if err := postFormJSON(ctx, endpoint, values, &tokens); err != nil {
+		tokens, err := postTokenRequest(ctx, endpoint, values)
+		if err != nil {
 			return tokens, err
 		}
 
@@ -197,6 +197,43 @@ func postFormJSON(ctx context.Context, endpoint string, values url.Values, out a
 	defer resp.Body.Close()
 
 	return decodeResponse(resp, out)
+}
+
+func postTokenRequest(ctx context.Context, endpoint string, values url.Values) (tokenResponse, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(values.Encode()))
+	if err != nil {
+		return tokenResponse{}, err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return tokenResponse{}, err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return tokenResponse{}, err
+	}
+	if len(body) == 0 {
+		return tokenResponse{}, fmt.Errorf("empty response body from %s", resp.Request.URL)
+	}
+
+	var tokens tokenResponse
+	if err := json.Unmarshal(body, &tokens); err != nil {
+		return tokens, fmt.Errorf("decode response from %s: %w", resp.Request.URL, err)
+	}
+
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		if tokens.Error != "" {
+			return tokens, nil
+		}
+		return tokens, fmt.Errorf("request to %s failed with status %d: %s", resp.Request.URL, resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	return tokens, nil
 }
 
 func decodeResponse(resp *http.Response, out any) error {
